@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+data/
+.ropeproject/
+*.egg-info/
+.env
+**/secret-postgres.env

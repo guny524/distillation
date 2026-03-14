@@ -1,0 +1,73 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: distillation
+  namespace: distillation
+spec:
+  schedule: "0 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          volumes:
+          - name: workspace-volume
+            emptyDir: {}
+          - name: output-volume
+            emptyDir: {}
+          - name: nfs-volume
+            persistentVolumeClaim:
+              claimName: pvc-distillation-nfs
+          initContainers:
+          - name: dump-coverage
+            image: distillation:latest
+            command:
+            - python3
+            - /workspace/scripts/dump_coverage.py
+            - --output
+            - /workspace/coverage.json
+            envFrom:
+            - secretRef:
+                name: secret-postgres
+            env:
+            - name: POSTGRES_HOST
+              value: svc-postgres
+            - name: POSTGRES_DB
+              value: distillation
+            volumeMounts:
+            - name: workspace-volume
+              mountPath: /workspace/output
+          containers:
+          - name: distillation
+            image: distillation:latest
+            command:
+            - bash
+            - /workspace/entrypoint.sh
+            envFrom:
+            - secretRef:
+                name: secret-postgres
+            env:
+            - name: POSTGRES_HOST
+              value: svc-postgres
+            - name: POSTGRES_DB
+              value: distillation
+            - name: CODEX_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: secret-codex
+                  key: CODEX_TOKEN
+            volumeMounts:
+            - name: workspace-volume
+              mountPath: /workspace/output
+            - name: nfs-volume
+              mountPath: /mnt/nfs/distillation
+            resources:
+              requests:
+                cpu: 200m
+                memory: 256Mi
+              limits:
+                cpu: "2"
+                memory: 1Gi

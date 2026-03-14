@@ -1,0 +1,79 @@
+# 4-axis domain taxonomy for distillation Q&A diversity
+# codex agent reads this file to understand classification axes
+# Each axis has enumerated values with descriptions
+
+domain:
+  description: "Subject matter domain of the Q&A task"
+  values:
+    software-engineering:
+      description: "Code writing, debugging, architecture, DevOps"
+    data-science:
+      description: "Statistics, ML, data analysis, visualization"
+    mathematics:
+      description: "Math problems, proofs, numerical computation"
+    natural-science:
+      description: "Physics, chemistry, biology, earth science"
+    finance:
+      description: "Stocks, investment, financial products, quantitative analysis, risk management"
+    business:
+      description: "Strategy, marketing, business analysis, operations"
+    legal-compliance:
+      description: "Legal interpretation, regulatory compliance, contract review"
+    education:
+      description: "Educational material creation, curriculum design, assessment"
+    creative-writing:
+      description: "Fiction, poetry, copywriting, screenwriting"
+    technical-writing:
+      description: "Documentation, API docs, manuals, reports"
+    linguistics:
+      description: "Translation, grammar, language analysis, multilingual tasks"
+    philosophy-ethics:
+      description: "Ethical judgment, argumentation, thought experiments"
+    general-knowledge:
+      description: "Common knowledge, history, culture, current affairs"
+
+capability:
+  description: "Required cognitive capability for the task"
+  values:
+    reasoning:
+      description: "Logical reasoning, causal analysis"
+    knowledge-recall:
+      description: "Factual knowledge retrieval"
+    generation:
+      description: "Creating new content from scratch"
+    transformation:
+      description: "Converting input to another form (summarization, translation, format change)"
+    evaluation:
+      description: "Quality judgment, comparative analysis, critique"
+    planning:
+      description: "Plan formulation, step decomposition, strategy"
+    problem-solving:
+      description: "Deriving solutions under constraints"
+    instruction-following:
+      description: "Accurately executing complex instructions"
+
+difficulty:
+  description: "Task difficulty level"
+  values:
+    easy:
+      description: "Single step, clear correct answer"
+    medium:
+      description: "2-3 steps, some judgment required"
+    hard:
+      description: "Multi-step, ambiguity present, expert knowledge required"
+
+task_shape:
+  description: "Output format/shape of the response"
+  values:
+    short-text:
+      description: "1-3 sentence response"
+    long-text:
+      description: "Multi-paragraph structured text"
+    code:
+      description: "Programming code"
+    structured-data:
+      description: "JSON, tables, lists, or other structured data"
+    analysis-report:
+      description: "Report with analysis, conclusions, and supporting evidence"
+    step-by-step:
+      description: "Sequential procedure or guide"

@@ -1,0 +1,6 @@
+namespace: distillation
+
+resources:
+- postgres
+- cronjob.yaml
+- pvc-data.yaml

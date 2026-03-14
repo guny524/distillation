@@ -1,0 +1,15 @@
+resources:
+- namespaces.yaml
+- ../../base
+
+images:
+- name: distillation
+  newName: distillation
+  newTag: latest  # TODO: replace with actual image registry and tag
+
+secretGenerator:
+- name: secret-postgres
+  namespace: distillation
+  behavior: replace
+  envs:
+  - secret-postgres.env

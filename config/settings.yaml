@@ -1,0 +1,46 @@
+# Distillation pipeline settings
+# Adjust values based on your Codex Pro quota usage
+
+# -- CronJob schedule --
+# Quota calculation guide:
+#   Pro plan GPT-5.4: 223~1120 messages per 5h window
+#   Distillation Q&A produces long responses -> near lower bound (~223)
+#   Daily: 24h = 4.8 windows -> conservative ~200 calls/day
+#   Weekly limit: ~2000-2500 credits, ~7 credits per call
+#   Example: 2000 credits / 7 = ~285/week = ~40/day = every 36 min
+#   Conservative: every 60 min = 24/day = 168/week
+cron:
+  schedule: "0 * * * *"  # every hour (conservative default)
+
+# -- PostgreSQL connection --
+# Values are read from environment variables (k8s Secret)
+database:
+  host: "${POSTGRES_HOST}"
+  port: 5432
+  name: "${POSTGRES_DB}"
+  user: "${POSTGRES_USER}"
+  password: "${POSTGRES_PASSWORD}"
+
+# -- Codex exec --
+codex:
+  model: "gpt-5.4"
+  sandbox: "workspace-write"  # or "full-auto"
+  prompt_path: "/workspace/prompts/distillation.md"
+
+# -- Output paths --
+output:
+  workspace_dir: "/workspace/output"
+  result_file: "result.jsonl"
+
+# -- Coverage --
+coverage:
+  file_path: "/workspace/coverage.json"
+
+# -- NFS backup --
+nfs:
+  backup_path: "/mnt/nfs/distillation"
+
+# -- Parquet export --
+parquet:
+  shard_prefix: "train"
+  max_rows_per_shard: 50000

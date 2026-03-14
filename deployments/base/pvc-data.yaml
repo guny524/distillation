@@ -1,0 +1,27 @@
+# NFS PV - nfs.server, nfs.path to match your environment
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-distillation-nfs
+spec:
+  capacity:
+    storage: 100Gi
+  accessModes:
+  - ReadWriteMany
+  nfs:
+    server: "YOUR_NFS_SERVER_IP"  # TODO: NFS server IP
+    path: "/YOUR/NFS/PATH"        # TODO: NFS export path
+  persistentVolumeReclaimPolicy: Retain
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-distillation-nfs
+  namespace: distillation
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 100Gi
+  volumeName: pv-distillation-nfs

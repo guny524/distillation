@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DistillationQAPair",
+  "description": "Single Q&A pair for distillation dataset. One codex exec call produces one object conforming to this schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "task_id",
+    "domain",
+    "difficulty",
+    "task_shape",
+    "capability_tags",
+    "user_request",
+    "context",
+    "success_criteria",
+    "plan",
+    "reasoning_summary",
+    "final_answer",
+    "self_check",
+    "quality_notes"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "description": "Unique identifier for this Q&A pair (e.g. UUID or timestamp-based)",
+      "minLength": 1
+    },
+    "domain": {
+      "type": "string",
+      "description": "Subject domain from taxonomy axis 1",
+      "enum": [
+        "software-engineering",
+        "data-science",
+        "mathematics",
+        "natural-science",
+        "finance",
+        "business",
+        "legal-compliance",
+        "education",
+        "creative-writing",
+        "technical-writing",
+        "linguistics",
+        "philosophy-ethics",
+        "general-knowledge"
+      ]
+    },
+    "difficulty": {
+      "type": "string",
+      "description": "Task difficulty from taxonomy axis 3",
+      "enum": [
+        "easy",
+        "medium",
+        "hard"
+      ]
+    },
+    "task_shape": {
+      "type": "string",
+      "description": "Output format from taxonomy axis 4",
+      "enum": [
+        "short-text",
+        "long-text",
+        "code",
+        "structured-data",
+        "analysis-report",
+        "step-by-step"
+      ]
+    },
+    "capability_tags": {
+      "type": "array",
+      "description": "Required capabilities from taxonomy axis 2 (one or more)",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "reasoning",
+          "knowledge-recall",
+          "generation",
+          "transformation",
+          "evaluation",
+          "planning",
+          "problem-solving",
+          "instruction-following"
+        ]
+      }
+    },
+    "user_request": {
+      "type": "string",
+      "description": "The user question or instruction (input side of the Q&A pair)",
+      "minLength": 1
+    },
+    "context": {
+      "type": "string",
+      "description": "Background context or constraints provided alongside the request",
+      "minLength": 1
+    },
+    "success_criteria": {
+      "type": "array",
+      "description": "Criteria that a correct answer must satisfy",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "plan": {
+      "type": "array",
+      "description": "Step-by-step plan the model follows to produce the answer",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "reasoning_summary": {
+      "type": "string",
+      "description": "Summary of the reasoning process used to derive the answer",
+      "minLength": 1
+    },
+    "final_answer": {
+      "type": "string",
+      "description": "The complete final answer (response side of the Q&A pair)",
+      "minLength": 1
+    },
+    "self_check": {
+      "type": "array",
+      "description": "Self-verification items the model checked after producing the answer",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "quality_notes": {
+      "type": "array",
+      "description": "Notes on answer quality, potential issues, or improvement areas",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "references": {
+      "type": "array",
+      "description": "Optional external references or sources consulted",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "description": "Optional supplementary artifacts (file paths, code snippets, etc.)",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}
