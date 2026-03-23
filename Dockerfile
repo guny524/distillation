@@ -1,30 +1,38 @@
-FROM node:22-bookworm
+FROM alpine:3.21
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-pip python3-venv \
-    && rm -rf /var/lib/apt/lists/*
+ARG CODEX_VERSION=0.115.0
 
-RUN python3 -m pip install --no-cache-dir --break-system-packages \
-    psycopg2-binary
+# ca-certificates for HTTPS (codex -> OpenAI API)
+RUN apk add --no-cache ca-certificates
 
-RUN npm install -g @openai/codex
+# codex CLI (Rust binary from GitHub releases, musl static build)
+RUN wget -qO /tmp/codex.tar.gz \
+    "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-x86_64-unknown-linux-musl.tar.gz" \
+    && tar xzf /tmp/codex.tar.gz -C /usr/local/bin/ \
+    && rm /tmp/codex.tar.gz \
+    && chmod +x /usr/local/bin/codex
 
-# non-root user
-RUN groupadd --system --gid 1001 distill \
-    && useradd --system --uid 1001 --gid distill codexuser
+# non-root user with home directory for codex auth
+RUN addgroup -g 1001 -S distill \
+    && adduser -u 1001 -S -G distill -h /home/codexuser codexuser
+
+ENV CODEX_HOME=/home/codexuser/.codex
+RUN mkdir -p /home/codexuser/.codex && chown -R codexuser:distill /home/codexuser
 
 WORKDIR /workspace
 
 RUN mkdir -p /workspace/output && chown -R codexuser:distill /workspace
 
+# Go binary (locally cross-compiled, see Makefile build target)
+COPY distill /usr/local/bin/distill
+
 COPY --chown=codexuser:distill prompts/ /workspace/prompts/
 COPY --chown=codexuser:distill config/ /workspace/config/
 COPY --chown=codexuser:distill schemas/ /workspace/schemas/
-COPY --chown=codexuser:distill scripts/ /workspace/scripts/
 COPY --chown=codexuser:distill entrypoint.sh /workspace/entrypoint.sh
 
 RUN chmod +x /workspace/entrypoint.sh
 
 USER codexuser
 
-ENTRYPOINT ["bash", "/workspace/entrypoint.sh"]
+ENTRYPOINT ["sh", "/workspace/entrypoint.sh"]

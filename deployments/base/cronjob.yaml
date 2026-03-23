@@ -16,19 +16,20 @@ spec:
           volumes:
           - name: workspace-volume
             emptyDir: {}
-          - name: output-volume
-            emptyDir: {}
           - name: nfs-volume
             persistentVolumeClaim:
               claimName: pvc-distillation-nfs
+          - name: codex-auth
+            secret:
+              secretName: secret-codex
           initContainers:
           - name: dump-coverage
             image: distillation:latest
             command:
-            - python3
-            - /workspace/scripts/dump_coverage.py
+            - distill
+            - coverage
             - --output
-            - /workspace/coverage.json
+            - /workspace/output/coverage.json
             envFrom:
             - secretRef:
                 name: secret-postgres
@@ -44,7 +45,7 @@ spec:
           - name: distillation
             image: distillation:latest
             command:
-            - bash
+            - sh
             - /workspace/entrypoint.sh
             envFrom:
             - secretRef:
@@ -54,16 +55,17 @@ spec:
               value: svc-postgres
             - name: POSTGRES_DB
               value: distillation
-            - name: CODEX_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: secret-codex
-                  key: CODEX_TOKEN
+            - name: CODEX_HOME
+              value: /home/codexuser/.codex
             volumeMounts:
             - name: workspace-volume
               mountPath: /workspace/output
             - name: nfs-volume
               mountPath: /mnt/nfs/distillation
+            - name: codex-auth
+              mountPath: /home/codexuser/.codex/auth.json
+              subPath: auth.json
+              readOnly: true
             resources:
               requests:
                 cpu: 200m

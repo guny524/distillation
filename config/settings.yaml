@@ -24,7 +24,7 @@ database:
 # -- Codex exec --
 codex:
   model: "gpt-5.4"
-  sandbox: "workspace-write"  # or "full-auto"
+  sandbox: "full-auto"  # --full-auto includes workspace-write + auto-approve
   prompt_path: "/workspace/prompts/distillation.md"
 
 # -- Output paths --
@@ -34,7 +34,7 @@ output:
 
 # -- Coverage --
 coverage:
-  file_path: "/workspace/coverage.json"
+  file_path: "/workspace/output/coverage.json"
 
 # -- NFS backup --
 nfs:

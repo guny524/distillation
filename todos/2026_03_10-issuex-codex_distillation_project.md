@@ -169,7 +169,7 @@ distillation/
       - kustomization.yaml
       - namespaces.yaml
 - docs/
-  - 2026_03_10-issue000-codex_distillation_project.md
+  - 2026_03_10-issuex-codex_distillation_project.md
 ```
 
 ---

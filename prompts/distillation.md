@@ -12,7 +12,7 @@ Internalize each axis value and its description so you can select appropriate co
 
 ## Step 2: Read current coverage
 
-Read `/workspace/coverage.json`. This file contains the current distribution of previously generated data across the 4 axes. Identify which axis combinations are underrepresented or missing entirely. Prioritize combinations with zero or lowest counts.
+Read `/workspace/output/coverage.json`. This file contains the current distribution of previously generated data across the 4 axes. Identify which axis combinations are underrepresented or missing entirely. Prioritize combinations with zero or lowest counts.
 
 If the file is empty, contains `{}`, or has no meaningful data, treat all combinations as equally uncovered and freely choose a combination that maximizes diversity.
 
