@@ -100,9 +100,9 @@ kubectl -n distillation create secret generic secret-codex \
 #   --from-file=auth.json=$HOME/.codex/auth.json
 ```
 
-### 4-2. NFS 설정
+### 4-2. NFS 설정 (export용, CronJob 배포에는 불필요)
 
-`deployments/base/pvc-data.yaml`에서 NFS 서버 정보 수정:
+`deployments/base/pvc-data.yaml`에서 NFS 서버 정보 수정. NFS는 `distill export`로 Parquet을 백업할 때 사용하며, CronJob(coverage + codex exec + load) 자체는 NFS 없이 동작한다. NFS 서버 세팅 후 `cronjob.yaml`의 TODO 주석을 참고하여 nfs-volume mount를 추가한다.
 
 ```yaml
 nfs:
@@ -153,7 +153,7 @@ schedule: "0 */2 * * *"
 
 ### 5-3. rate limit 에러 시
 
-codex exec가 rate limit으로 실패하면 해당 CronJob pod는 비정상 종료. `failedJobsHistoryLimit: 5`로 설정되어 있으므로 로그 확인 가능. 다음 주기까지 자동 대기.
+codex exec가 rate limit으로 실패하면 해당 CronJob pod는 비정상 종료. `failedJobsHistoryLimit: 5`로 설정되어 있으므로 로그 확인 가능. 다음 주기까지 자동 대기. `activeDeadlineSeconds: 1800`으로 설정되어 있어 codex exec가 30분 이상 응답하지 않으면 Job이 강제 종료된다.
 
 ## 6. 4축 분류 체계
 

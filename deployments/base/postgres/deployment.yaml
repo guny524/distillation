@@ -26,11 +26,21 @@ spec:
           value: "Asia/Seoul"
         - name: PGTZ
           value: "Asia/Seoul"
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
         readinessProbe:
           tcpSocket:
             port: 5432
           initialDelaySeconds: 5
           periodSeconds: 10
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - pg_isready -U "$POSTGRES_USER"
+          initialDelaySeconds: 30
+          periodSeconds: 30
         volumeMounts:
         - name: postgres-storage
           mountPath: /var/lib/postgresql/data

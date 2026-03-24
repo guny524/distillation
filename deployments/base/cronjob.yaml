@@ -10,15 +10,14 @@ spec:
   failedJobsHistoryLimit: 5
   jobTemplate:
     spec:
+      activeDeadlineSeconds: 1800
       template:
         spec:
           restartPolicy: OnFailure
           volumes:
           - name: workspace-volume
             emptyDir: {}
-          - name: nfs-volume
-            persistentVolumeClaim:
-              claimName: pvc-distillation-nfs
+          # TODO: NFS 서버 세팅 후 nfs-volume 추가하여 main container에 /mnt/nfs/distillation mount (pvc-distillation-nfs)
           - name: codex-auth
             secret:
               secretName: secret-codex
@@ -38,6 +37,13 @@ spec:
               value: svc-postgres
             - name: POSTGRES_DB
               value: distillation
+            resources:
+              requests:
+                cpu: 100m
+                memory: 128Mi
+              limits:
+                cpu: 500m
+                memory: 256Mi
             volumeMounts:
             - name: workspace-volume
               mountPath: /workspace/output
@@ -60,8 +66,6 @@ spec:
             volumeMounts:
             - name: workspace-volume
               mountPath: /workspace/output
-            - name: nfs-volume
-              mountPath: /mnt/nfs/distillation
             - name: codex-auth
               mountPath: /home/codexuser/.codex/auth.json
               subPath: auth.json
