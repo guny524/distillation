@@ -1,0 +1,45 @@
+# Schema init Job: the ONE place that creates tables (`distill migrate` applies
+# internal/db/schema.sql). Runs once before the workers; the workers' wait-for-schema
+# initContainer blocks until this Job has created distillation_items, so no worker
+# ever creates or checks the schema itself.
+#
+# Re-apply note: deploys are drop+redeploy (namespace recreated), so the Job runs
+# fresh each time. To re-run against an existing namespace, delete the Job first.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: distillation-migrate
+  namespace: distillation
+spec:
+  backoffLimit: 5
+  template:
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+      - name: wait-for-postgres
+        image: postgres:15-alpine
+        command:
+        - sh
+        - -c
+        - until pg_isready -h svc-postgres -p 5432; do echo "waiting for postgres"; sleep 2; done
+      containers:
+      - name: migrate
+        image: distillation:latest
+        command:
+        - distill
+        - migrate
+        envFrom:
+        - secretRef:
+            name: secret-postgres
+        env:
+        - name: POSTGRES_HOST
+          value: svc-postgres
+        - name: POSTGRES_DB
+          value: distillation
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 250m
+            memory: 128Mi

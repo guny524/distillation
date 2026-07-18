@@ -1,7 +1,1 @@
-data/
-.env
-secret-*.env
-**/secret-*.env
-auth.json
-/distill
-bin/
+secrets-*.zip

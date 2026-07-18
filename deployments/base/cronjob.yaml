@@ -1,9 +1,102 @@
+# Periodic queue jobs (todos sec 2-5-3): ingest discovers source documents and
+# enqueues them; flush projects flush-gated items to the distillation_pairs buffer
+# and exports it to the export volume. Both run one drain pass and exit (no --loop), so a
+# CronJob is the right primitive. The always-on stage workers
+# (comprehend/question/presolve/answer/verify) live in workers.yaml.
+#
+# Both gate on the schema (created once by the distillation-migrate Job) via a
+# wait-for-schema initContainer, and take the same DB env as the workers.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: distillation
+  name: distillation-ingest
   namespace: distillation
+  labels:
+    app: distillation-ingest
+    stage: ingest
 spec:
+  # Every 30 min: source discovery is cheap (metadata fetch + ON CONFLICT dedup on
+  # (source_type, doc_id), todos sec 2-5-7) and keeps the queue fed. Enabled
+  # sources are opt-in in settings.yaml, so this is a no-op until one is turned on.
+  schedule: "*/30 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 1800
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          initContainers:
+          # Wait until the migrate Job created the schema (ingest/flush call openDB,
+          # which no longer self-migrates).
+          - name: wait-for-schema
+            image: postgres:15-alpine
+            envFrom:
+            - secretRef:
+                name: secret-postgres
+            command:
+            - sh
+            - -c
+            - |
+              export PGPASSWORD="$POSTGRES_PASSWORD"
+              until psql -h svc-postgres -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select to_regclass('public.distillation_items')" | grep -q distillation_items; do
+                echo "waiting for schema (migrate job)"; sleep 2
+              done
+          containers:
+          - name: ingest
+            image: distillation:latest
+            command:
+            - distill
+            - ingest
+            envFrom:
+            - secretRef:
+                name: secret-postgres
+            env:
+            - name: POSTGRES_HOST
+              value: svc-postgres
+            - name: POSTGRES_DB
+              value: distillation
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: SUBGATE_ENDPOINT_TEACHER
+              value: ""
+            - name: SUBGATE_ENDPOINT_GENERATOR
+              value: ""
+            - name: SUBGATE_ENDPOINT_STUDENT
+              value: ""
+            - name: SUBGATE_ENDPOINT_JUDGE
+              value: ""
+            - name: SUBGATE_ENDPOINT_TRANSLATOR
+              value: ""
+            - name: SUBGATE_ENDPOINT_VERIFIER
+              value: ""
+            resources:
+              requests:
+                cpu: 100m
+                memory: 128Mi
+              limits:
+                cpu: 500m
+                memory: 512Mi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: distillation-flush
+  namespace: distillation
+  labels:
+    app: distillation-flush
+    stage: flush
+spec:
+  # Hourly: project flush-gated items (presolved + verified + not superseded + not
+  # yet projected, todos sec 2-5-6) into the distillation_pairs buffer, then
+  # merge-export the buffer to a compressed Parquet batch on the export volume once it
+  # reaches threshold_rows. concurrencyPolicy Forbid + the flush export-volume lock keep
+  # exports from overlapping.
   schedule: "0 * * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
@@ -11,24 +104,32 @@ spec:
   jobTemplate:
     spec:
       activeDeadlineSeconds: 1800
+      backoffLimit: 2
       template:
         spec:
           restartPolicy: OnFailure
-          volumes:
-          - name: workspace-volume
-            emptyDir: {}
-          # TODO: NFS 서버 세팅 후 nfs-volume 추가하여 main container에 /mnt/nfs/distillation mount (pvc-distillation-nfs)
-          - name: codex-auth
-            secret:
-              secretName: secret-codex
           initContainers:
-          - name: dump-coverage
+          # Wait until the migrate Job created the schema (ingest/flush call openDB,
+          # which no longer self-migrates).
+          - name: wait-for-schema
+            image: postgres:15-alpine
+            envFrom:
+            - secretRef:
+                name: secret-postgres
+            command:
+            - sh
+            - -c
+            - |
+              export PGPASSWORD="$POSTGRES_PASSWORD"
+              until psql -h svc-postgres -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select to_regclass('public.distillation_items')" | grep -q distillation_items; do
+                echo "waiting for schema (migrate job)"; sleep 2
+              done
+          containers:
+          - name: flush
             image: distillation:latest
             command:
             - distill
-            - coverage
-            - --output
-            - /workspace/output/coverage.json
+            - flush
             envFrom:
             - secretRef:
                 name: secret-postgres
@@ -37,43 +138,37 @@ spec:
               value: svc-postgres
             - name: POSTGRES_DB
               value: distillation
+            # flush claims items with owner-fenced ProjectAndComplete, so it needs a
+            # unique lock_owner_id per run (todos sec 2-5-2/hardening #6).
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: SUBGATE_ENDPOINT_TEACHER
+              value: ""
+            - name: SUBGATE_ENDPOINT_GENERATOR
+              value: ""
+            - name: SUBGATE_ENDPOINT_STUDENT
+              value: ""
+            - name: SUBGATE_ENDPOINT_JUDGE
+              value: ""
+            - name: SUBGATE_ENDPOINT_TRANSLATOR
+              value: ""
+            - name: SUBGATE_ENDPOINT_VERIFIER
+              value: ""
+            # flush exports Parquet batches to the export root (settings.yaml
+            # flush.export_dir = /mnt/distillation), so mount the shared PVC.
+            volumeMounts:
+            - name: data
+              mountPath: /mnt/distillation
             resources:
               requests:
                 cpu: 100m
                 memory: 128Mi
               limits:
                 cpu: 500m
-                memory: 256Mi
-            volumeMounts:
-            - name: workspace-volume
-              mountPath: /workspace/output
-          containers:
-          - name: distillation
-            image: distillation:latest
-            command:
-            - sh
-            - /workspace/entrypoint.sh
-            envFrom:
-            - secretRef:
-                name: secret-postgres
-            env:
-            - name: POSTGRES_HOST
-              value: svc-postgres
-            - name: POSTGRES_DB
-              value: distillation
-            - name: CODEX_HOME
-              value: /home/codexuser/.codex
-            volumeMounts:
-            - name: workspace-volume
-              mountPath: /workspace/output
-            - name: codex-auth
-              mountPath: /home/codexuser/.codex/auth.json
-              subPath: auth.json
-              readOnly: true
-            resources:
-              requests:
-                cpu: 200m
-                memory: 256Mi
-              limits:
-                cpu: "2"
-                memory: 1Gi
+                memory: 512Mi
+          volumes:
+          - name: data
+            persistentVolumeClaim:
+              claimName: pvc-distillation-data

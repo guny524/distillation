@@ -1,0 +1,272 @@
+# Single-host (EC2 / home server) production target. Instead of k8s
+# (overlays/prod, kustomize) this brings the whole distillation stack up on one
+# machine with `docker compose up -d --build`: db + schema migration + the five
+# always-on stage workers + an ofelia scheduler for the periodic ingest/flush jobs
+# (kream_crawl's pattern, todos sec 2-5-8). Single image, reused everywhere.
+#
+# PREREQUISITE: the image (Dockerfile at the repo root) COPYs a pre-built Go
+# binary `distill` from the repo root -- it does NOT compile inside the build. Run
+# `make build` first so ./distill exists; the build fails loudly if it is missing
+# (we never silently self-build). `.dockerignore` keeps deployments/ and *.env out
+# of the build context, so this file and .env never leak into the image.
+#
+# Services:
+# - db: Postgres, always-on. Password from .env (git-untracked); USER/DB inline.
+# - migrate: builds+tags the shared image AND applies the schema once via
+#     `distill migrate` (the ONLY thing that creates tables). Runs to completion,
+#     then exits. The always-on workers gate on it (service_completed_successfully),
+#     so the schema exists before any worker starts -- workers never create or even
+#     check the schema themselves.
+# - data-init: chowns the flush export volume to the image's non-root uid so the flush
+#     job (uid 1001) can write Parquet batches. Runs once, then exits.
+# - comprehend/question/presolve/answer/verify: always-on stage workers
+#     (`distill <stage> --loop`), each a distinct compose service so its hostname
+#     (= lock_owner_id fallback when POD_NAME is unset) is unique (todos sec 2-5-2).
+# - ofelia: `daemon --docker` reads the labels below as periodic job definitions
+#     (ingest/flush), the compose equivalent of the k8s CronJobs. Secrets reach the
+#     job env via .env interpolation (no plaintext in this tracked file).
+#
+# Project name is fixed so the network/volume names ofelia references by string do
+# not drift with the directory name.
+name: distillation
+
+services:
+  db:
+    image: postgres:15-alpine
+    # Password from .env (git-untracked); non-secrets (USER/DB) inline.
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: guny524
+      POSTGRES_DB: distillation
+      PGDATA: /var/lib/postgresql/data/pgdata
+      TZ: Asia/Seoul
+      PGTZ: Asia/Seoul
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - distillation
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U guny524 -d distillation"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # migrate: builds distillation:latest (build context = repo root, root Dockerfile)
+  # and applies the schema by running `distill ingest` once. openDB (cmd/distill)
+  # applies pacing + distillation_pairs + queue + payload migrations idempotently;
+  # the ingest pass is a clean no-op until a source is enabled in settings.yaml.
+  # This is the standard prod migration gate: always-on services wait for it to
+  # finish (service_completed_successfully) before starting.
+  migrate:
+    build:
+      context: ../../../back
+      dockerfile: Dockerfile
+    image: distillation:latest
+    command: ["migrate"]
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: guny524
+      POSTGRES_DB: distillation
+    networks:
+      - distillation
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  # data-init: a fresh named volume is root-owned, but the workers/flush run as the
+  # image's non-root uid 1001 (Dockerfile USER distill). chown the flush export mount
+  # once so the flush job can write its Parquet batches. Idempotent; runs at every
+  # `up` well before ofelia first triggers flush.
+  data-init:
+    image: alpine:3.21
+    command: ["sh", "-c", "chown -R 1001:1001 /mnt/distillation && chmod -R u+rwX /mnt/distillation"]
+    volumes:
+      - distillation-data:/mnt/distillation
+    restart: "no"
+
+  # --- always-on stage workers (todos sec 2-5-3) ---------------------------------
+  # Each drains one queue stage with `--loop`. They reuse the migrate-built image,
+  # gate on db healthy + migrate complete, and take the same DB env. POD_NAME is
+  # left unset: ResolveWorkerID falls back to the container hostname, which compose
+  # sets to the (unique) service name, so each worker fences its claims distinctly.
+  comprehend:
+    image: distillation:latest
+    # comprehend is the only stage that uses opencode. It is not baked into the
+    # shared image (arch-agnostic, small); fetch the arch-matching release at
+    # startup, then run the worker. The other workers just run `distill <stage>`.
+    entrypoint: ["/bin/sh", "-c", "fetch-opencode.sh && exec distill comprehend --loop"]
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: guny524
+      POSTGRES_DB: distillation
+      # opencode agentic harness (todos sec 2-5-4): HOME is opencode's state dir,
+      # OPENCODE_CONFIG points at the mounted provider(subgate)+agent config, and
+      # OPENCODE_SUBGATE_API_KEY is read by that config (subgate holds real auth, so
+      # the placeholder default stands unless you set it in .env).
+      HOME: /home/distill
+      OPENCODE_CONFIG: /workspace/config/opencode.json
+      OPENCODE_SUBGATE_API_KEY: ${OPENCODE_SUBGATE_API_KEY:-subgate-holds-auth}
+    volumes:
+      # Mount the repo's opencode config over the image's baked copy (no-rebuild
+      # tuning, same idea as the k8s distill-opencode configMap).
+      - ../../../back/config/opencode.json:/workspace/config/opencode.json:ro
+    networks:
+      - distillation
+      - subgate
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  question:
+    image: distillation:latest
+    command: ["question", "--loop"]
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: guny524
+      POSTGRES_DB: distillation
+    networks:
+      - distillation
+      - subgate
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  presolve:
+    image: distillation:latest
+    command: ["presolve", "--loop"]
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: guny524
+      POSTGRES_DB: distillation
+    networks:
+      - distillation
+      - subgate
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  answer:
+    image: distillation:latest
+    command: ["answer", "--loop"]
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: guny524
+      POSTGRES_DB: distillation
+    networks:
+      - distillation
+      - subgate
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  verify:
+    image: distillation:latest
+    command: ["verify", "--loop"]
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: guny524
+      POSTGRES_DB: distillation
+    networks:
+      - distillation
+      - subgate
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # ofelia: the periodic ingest/flush scheduler (k8s CronJob equivalent). `daemon
+  # --docker` reads the labels below as job definitions and spawns a container from
+  # distillation:latest on each schedule. pull=false pins it to the locally built
+  # image (never pulled from a registry); environment/volume are JSON arrays;
+  # secrets are injected via .env interpolation so no plaintext lands in this file.
+  ofelia:
+    image: mcuadros/ofelia:latest
+    init: true
+    command: daemon --docker
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - distillation
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    labels:
+      # ingest: discover source docs + enqueue (ON CONFLICT dedup), every 30 min.
+      ofelia.job-run.ingest.schedule: "@every 5m"
+      ofelia.job-run.ingest.image: distillation:latest
+      ofelia.job-run.ingest.command: ingest
+      ofelia.job-run.ingest.network: distillation
+      ofelia.job-run.ingest.pull: "false"
+      ofelia.job-run.ingest.no-overlap: "true"
+      ofelia.job-run.ingest.environment: '["POSTGRES_HOST=db","POSTGRES_PORT=5432","POSTGRES_USER=guny524","POSTGRES_DB=distillation","POSTGRES_PASSWORD=${POSTGRES_PASSWORD}"]'
+      # flush: project flush-gated items to the buffer + export to the export volume,
+      # hourly. Mounts the export volume (data-init made it writable); the ephemeral
+      # container's unique hostname is its lock_owner_id for owner-fenced projection.
+      ofelia.job-run.flush.schedule: "@every 1h"
+      ofelia.job-run.flush.image: distillation:latest
+      ofelia.job-run.flush.command: flush
+      ofelia.job-run.flush.network: distillation
+      ofelia.job-run.flush.pull: "false"
+      ofelia.job-run.flush.no-overlap: "true"
+      ofelia.job-run.flush.volume: '["distillation-data:/mnt/distillation:rw"]'
+      ofelia.job-run.flush.environment: '["POSTGRES_HOST=db","POSTGRES_PORT=5432","POSTGRES_USER=guny524","POSTGRES_DB=distillation","POSTGRES_PASSWORD=${POSTGRES_PASSWORD}"]'
+
+networks:
+  # ofelia job-run takes the network as a string, so pin the name to avoid a
+  # project-prefix mismatch.
+  distillation:
+    name: distillation
+  # subgate compose가 만드는 공유 네트워크. LLM worker 5종이 조인해 baked 주소
+  # svc-subgate.subgate:8080(base_url/quota_url)이 그대로 해석된다.
+  # 기동 순서: subgate를 먼저 up (이 네트워크를 subgate compose가 생성).
+  subgate:
+    external: true
+    name: subgate
+
+volumes:
+  postgres-data:
+  # Fixed name so the ofelia flush job's volume label resolves to this exact volume
+  # (not a project-prefixed one). This is the single-host stand-in for the k8s
+  # PVC (flush.export_dir = /mnt/distillation).
+  distillation-data:
+    name: distillation-data

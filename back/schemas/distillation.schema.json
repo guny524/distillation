@@ -1,0 +1,352 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DistillationQAPair",
+  "description": "Single Q&A pair for the distillation dataset. Two producers conform to this schema: (1) the legacy taxonomy runner, which invents a task from the 4-axis taxonomy and populates only the base fields; (2) the M3 artifact-reverse-generation pipeline, which additionally populates artifact_refs, source_lane, pair_id, student_filter_verdict, verification, and difficulty_mutations. The base `required` array is the intersection both producers satisfy; artifact-based records carry stricter requirements expressed via `dependentRequired`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "task_id",
+    "domain",
+    "difficulty",
+    "task_shape",
+    "capability_tags",
+    "user_request",
+    "context",
+    "success_criteria",
+    "plan",
+    "reasoning_summary",
+    "final_answer",
+    "self_check",
+    "quality_notes"
+  ],
+  "dependentRequired": {
+    "artifact_refs": [
+      "source_lane",
+      "pair_id",
+      "student_filter_verdict"
+    ]
+  },
+  "$defs": {
+    "artifactRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One reverse-generation source reference. Stores a citation ID plus re-expression rationale, never a long verbatim copy of the source text (copyright: reference ID + re-expression only).",
+      "required": [
+        "source_type",
+        "doc_id",
+        "license",
+        "why_relevant"
+      ],
+      "properties": {
+        "source_type": {
+          "type": "string",
+          "description": "Artifact source bucket. `k8s` covers Kubernetes docs/KEP plus cloud-native OSS GitHub issues/PRs.",
+          "enum": [
+            "arxiv",
+            "stackexchange",
+            "k8s",
+            "pmc"
+          ]
+        },
+        "doc_id": {
+          "type": "string",
+          "description": "Stable identifier within the source (e.g. arXiv id, StackExchange post id, KEP number, PMC id)",
+          "minLength": 1
+        },
+        "url": {
+          "type": "string",
+          "description": "Optional canonical URL of the source document"
+        },
+        "license": {
+          "type": "string",
+          "description": "License of the source document (e.g. CC-BY-SA-4.0, CC-BY-4.0, arXiv-nonexclusive), recorded for redistribution safety",
+          "minLength": 1
+        },
+        "locator": {
+          "type": "string",
+          "description": "Optional offset/locator within the document (char range, section id, line range, paragraph anchor)"
+        },
+        "why_relevant": {
+          "type": "string",
+          "description": "Why this source grounds the reverse-generated question (re-expression rationale, not a quote)",
+          "minLength": 1
+        }
+      }
+    },
+    "studentFilterVerdict": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Student pre-filter outcome. Only fail/uncertain verdicts are forwarded to the teacher (that is why this record has a teacher trajectory).",
+      "required": [
+        "verdict",
+        "method",
+        "reason"
+      ],
+      "properties": {
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "uncertain"
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "judge_ref = judge vs reference answer; self_consistency = k-sample disagreement; both = union of the two; disabled = presolve configured off, no student/judge measurement (verdict is uncertain by definition)",
+          "enum": [
+            "judge_ref",
+            "self_consistency",
+            "both",
+            "disabled"
+          ]
+        },
+        "judge_score": {
+          "type": "number",
+          "description": "Optional judge score of the student answer vs the reference answer sketch"
+        },
+        "self_consistency_disagreement": {
+          "type": "number",
+          "description": "Optional 0..1 disagreement rate across k self-consistency samples"
+        },
+        "reason": {
+          "type": "string",
+          "description": "Why the student was routed to the teacher (fail/uncertain cause)",
+          "minLength": 1
+        }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Teacher trajectory verification result. Applied by the verifier step; a record may be inserted before verification, in which case this field is absent.",
+      "required": [
+        "method",
+        "result"
+      ],
+      "properties": {
+        "method": {
+          "type": "string",
+          "description": "How the trajectory was verified: test (unit/regression), rule (rule-based check), exec (execution), none (not verifiable)",
+          "enum": [
+            "test",
+            "rule",
+            "exec",
+            "none"
+          ]
+        },
+        "result": {
+          "type": "string",
+          "description": "pass/fail for verifiable methods; na when method is none",
+          "enum": [
+            "pass",
+            "fail",
+            "na"
+          ]
+        },
+        "detail": {
+          "type": "string",
+          "description": "Optional detail (test name, rule id, execution log excerpt)"
+        }
+      }
+    }
+  },
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "description": "Unique identifier for this Q&A pair (e.g. UUID or timestamp-based)",
+      "minLength": 1
+    },
+    "domain": {
+      "type": "string",
+      "description": "Subject domain from taxonomy axis 1",
+      "enum": [
+        "software-engineering",
+        "data-science",
+        "mathematics",
+        "natural-science",
+        "finance",
+        "business",
+        "legal-compliance",
+        "education",
+        "creative-writing",
+        "technical-writing",
+        "linguistics",
+        "philosophy-ethics",
+        "general-knowledge"
+      ]
+    },
+    "difficulty": {
+      "type": "string",
+      "description": "Task difficulty from taxonomy axis 3",
+      "enum": [
+        "easy",
+        "medium",
+        "hard"
+      ]
+    },
+    "task_shape": {
+      "type": "string",
+      "description": "Output format from taxonomy axis 4",
+      "enum": [
+        "short-text",
+        "long-text",
+        "code",
+        "structured-data",
+        "analysis-report",
+        "step-by-step"
+      ]
+    },
+    "capability_tags": {
+      "type": "array",
+      "description": "Required capabilities from taxonomy axis 2 (one or more)",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "reasoning",
+          "knowledge-recall",
+          "generation",
+          "transformation",
+          "evaluation",
+          "planning",
+          "problem-solving",
+          "instruction-following"
+        ]
+      }
+    },
+    "user_request": {
+      "type": "string",
+      "description": "The user question or instruction (input side of the Q&A pair)",
+      "minLength": 1
+    },
+    "context": {
+      "type": "string",
+      "description": "Background context or constraints provided alongside the request",
+      "minLength": 1
+    },
+    "success_criteria": {
+      "type": "array",
+      "description": "Criteria that a correct answer must satisfy",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "plan": {
+      "type": "array",
+      "description": "Step-by-step plan the model follows to produce the answer",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "reasoning_summary": {
+      "type": "string",
+      "description": "Summary of the reasoning process used to derive the answer",
+      "minLength": 1
+    },
+    "final_answer": {
+      "type": "string",
+      "description": "The complete final answer (response side of the Q&A pair)",
+      "minLength": 1
+    },
+    "self_check": {
+      "type": "array",
+      "description": "Self-verification items the model checked after producing the answer",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "quality_notes": {
+      "type": "array",
+      "description": "Notes on answer quality, potential issues, or improvement areas",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "references": {
+      "type": "array",
+      "description": "Optional external references or sources consulted",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "description": "Optional supplementary artifacts (file paths, code snippets, etc.)",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "source_lane": {
+      "type": "string",
+      "description": "M3 2-lane language of this record. The same question exists as a ko/en pair (linked by pair_id); CoT and content are written in this lane's language. Required for artifact-based records.",
+      "enum": [
+        "ko",
+        "en"
+      ]
+    },
+    "pair_id": {
+      "type": "string",
+      "description": "M3 identifier linking the ko/en records of the same question. Two lane records share one pair_id. Required for artifact-based records.",
+      "minLength": 1
+    },
+    "artifact_refs": {
+      "type": "array",
+      "description": "M3 reverse-generation grounding. Non-empty for artifact-based records; absent for legacy taxonomy records. Presence triggers dependentRequired (source_lane, pair_id, student_filter_verdict).",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/artifactRef"
+      }
+    },
+    "student_filter_verdict": {
+      "$ref": "#/$defs/studentFilterVerdict",
+      "description": "M3 student pre-filter outcome (why this pair was sent to the teacher). Required for artifact-based records."
+    },
+    "verification": {
+      "$ref": "#/$defs/verification",
+      "description": "M3 teacher-trajectory verification result. Optional (a record may exist before the verifier step runs)."
+    },
+    "difficulty_mutations": {
+      "type": "array",
+      "description": "M3 difficulty-raising operators applied to the base question (Evol-Instruct used only as a mutation, not as an author). Controlled vocabulary; extended as the M3 mutation step adds operators.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "fault_injection",
+          "partial_info_removal",
+          "conflicting_constraint"
+        ]
+      }
+    },
+    "teacher_model": {
+      "type": "string",
+      "description": "M3 metadata: teacher model id that produced the trajectory (records the credit mechanism)."
+    },
+    "teacher_provider": {
+      "type": "string",
+      "description": "M3 metadata: teacher provider (e.g. openai, claude, gemini), whose credit-consumption mechanism differs."
+    },
+    "cot": {
+      "type": "string",
+      "description": "In-band chain-of-thought the prompt forces the model to emit; present for all sources (todos sec 2-5-5). Supersedes reasoning_summary and carries the same meaning. MIGRATION PATH: the two fields coexist for now (removing reasoning_summary is breaking — it is in `required`); once the queue workers populate cot for every record, reasoning_summary is dropped and cot is promoted to required for artifact records via dependentRequired."
+    },
+    "cot_raw": {
+      "type": ["string", "null"],
+      "description": "Raw chain-of-thought from the provider's message.reasoning_content. Only open-weight teachers expose it (DeepSeek-R1/Qwen3/Kimi, per todos sec 2-5-5); null for summary-only subscription providers. Paired with has_raw_cot."
+    },
+    "has_raw_cot": {
+      "type": "boolean",
+      "description": "True when cot_raw holds a provider-raw reasoning_content (an open-weight teacher), false when only the in-band cot is available."
+    }
+  }
+}

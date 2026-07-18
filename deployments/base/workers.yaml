@@ -1,0 +1,467 @@
+# Always-on queue workers (todos sec 2-5-3): each drains one stage of the DB
+# state machine, polling with `--loop`. Replicas are distinguished by POD_NAME
+# (downward API -> lock_owner_id), so several replicas of a stage claim disjoint
+# rows via SELECT ... FOR UPDATE SKIP LOCKED with lock fencing (todos sec 2-5-2);
+# no StatefulSet is needed. Workers do NOT create the schema: the distillation-migrate
+# Job (migrate-job.yaml) applies it once, and each worker's wait-for-schema
+# initContainer blocks until the tables exist before the worker starts.
+#
+# Stage split (todos sec 2-5-3): comprehend/question/presolve/answer/verify are
+# always-on Deployments here; ingest/flush are periodic CronJobs (cronjob.yaml).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: distill-comprehend
+  namespace: distillation
+  labels:
+    app: distill-comprehend
+    stage: comprehend
+    component: worker
+spec:
+  # Single replica by default; comprehend is opencode-bound (one agentic fetch at
+  # a time is plenty for a home cluster). Scale out like answer if the comprehend
+  # backlog grows (fencing makes concurrent replicas safe).
+  replicas: 1
+  selector:
+    matchLabels:
+      app: distill-comprehend
+  template:
+    metadata:
+      labels:
+        app: distill-comprehend
+        stage: comprehend
+    spec:
+      initContainers:
+      # Gate startup until the migrate Job has created the schema (workers never
+      # create or check tables themselves). Waits for postgres to accept
+      # connections AND for distillation_items to exist. DB image (psql) +
+      # secret-postgres for auth.
+      - name: wait-for-schema
+        image: postgres:15-alpine
+        envFrom:
+        - secretRef:
+            name: secret-postgres
+        command:
+        - sh
+        - -c
+        - |
+          export PGPASSWORD="$POSTGRES_PASSWORD"
+          until psql -h svc-postgres -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select to_regclass('public.distillation_items')" | grep -q distillation_items; do
+            echo "waiting for schema (migrate job)"; sleep 2
+          done
+      containers:
+      - name: comprehend
+        image: distillation:latest
+        # comprehend is the only stage that uses opencode. It is not baked into the
+        # shared image; fetch the arch-matching release at startup, then run the
+        # worker. The fetched binary lands in the image's writable /home/distill
+        # (owned by uid 1001, the image USER).
+        command:
+        - /bin/sh
+        - -c
+        - fetch-opencode.sh && exec distill comprehend --loop
+        envFrom:
+        - secretRef:
+            name: secret-postgres
+        env:
+        - name: POSTGRES_HOST
+          value: svc-postgres
+        - name: POSTGRES_DB
+          value: distillation
+        # lock_owner_id source (todos sec 2-5-2): the pod name is unique per replica,
+        # so each replica fences its own claims.
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        # Per-role endpoint overrides; empty = use the baked settings.yaml value.
+        - name: SUBGATE_ENDPOINT_TEACHER
+          value: ""
+        - name: SUBGATE_ENDPOINT_GENERATOR
+          value: ""
+        - name: SUBGATE_ENDPOINT_STUDENT
+          value: ""
+        - name: SUBGATE_ENDPOINT_JUDGE
+          value: ""
+        - name: SUBGATE_ENDPOINT_TRANSLATOR
+          value: ""
+        - name: SUBGATE_ENDPOINT_VERIFIER
+          value: ""
+        # opencode agentic harness config (todos sec 2-5-4). HOME is where opencode
+        # writes its session/cache/auth state; OPENCODE_CONFIG points it at the
+        # mounted provider(subgate)+agent config; OPENCODE_SUBGATE_API_KEY is read by
+        # that config's {env:...} placeholder (subgate holds the real auth, so the
+        # Secret carries only a placeholder unless the endpoint needs a real key).
+        - name: HOME
+          value: /home/distill
+        - name: OPENCODE_CONFIG
+          value: /workspace/config/opencode.json
+        - name: OPENCODE_SUBGATE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: secret-opencode
+              key: OPENCODE_SUBGATE_API_KEY
+        volumeMounts:
+        - name: prompt
+          mountPath: /workspace/prompts/distillation_api.md
+          subPath: distillation_api.md
+          readOnly: true
+        # opencode provider/agent config, mounted over the image's baked copy so it
+        # is tunable without a rebuild (same no-rebuild philosophy as distill-prompt,
+        # todos sec 2-6). config_path in settings.yaml already points here.
+        - name: opencode-config
+          mountPath: /workspace/config/opencode.json
+          subPath: opencode.json
+          readOnly: true
+        resources:
+          # Larger than the API-bound workers: comprehend shells out to opencode
+          # (a Bun runtime) which fetches + reads large source docs in-process.
+          requests:
+            cpu: 250m
+            memory: 256Mi
+          limits:
+            cpu: "1"
+            memory: 1Gi
+      volumes:
+      - name: prompt
+        configMap:
+          name: distill-prompt
+      - name: opencode-config
+        configMap:
+          name: distill-opencode
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: distill-question
+  namespace: distillation
+  labels:
+    app: distill-question
+    stage: question
+    component: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: distill-question
+  template:
+    metadata:
+      labels:
+        app: distill-question
+        stage: question
+    spec:
+      initContainers:
+      # Wait until the migrate Job created the schema (see comprehend for detail).
+      - name: wait-for-schema
+        image: postgres:15-alpine
+        envFrom:
+        - secretRef:
+            name: secret-postgres
+        command:
+        - sh
+        - -c
+        - |
+          export PGPASSWORD="$POSTGRES_PASSWORD"
+          until psql -h svc-postgres -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select to_regclass('public.distillation_items')" | grep -q distillation_items; do
+            echo "waiting for schema (migrate job)"; sleep 2
+          done
+      containers:
+      - name: question
+        image: distillation:latest
+        command:
+        - distill
+        - question
+        - --loop
+        envFrom:
+        - secretRef:
+            name: secret-postgres
+        env:
+        - name: POSTGRES_HOST
+          value: svc-postgres
+        - name: POSTGRES_DB
+          value: distillation
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: SUBGATE_ENDPOINT_TEACHER
+          value: ""
+        - name: SUBGATE_ENDPOINT_GENERATOR
+          value: ""
+        - name: SUBGATE_ENDPOINT_STUDENT
+          value: ""
+        - name: SUBGATE_ENDPOINT_JUDGE
+          value: ""
+        - name: SUBGATE_ENDPOINT_TRANSLATOR
+          value: ""
+        - name: SUBGATE_ENDPOINT_VERIFIER
+          value: ""
+        volumeMounts:
+        - name: prompt
+          mountPath: /workspace/prompts/distillation_api.md
+          subPath: distillation_api.md
+          readOnly: true
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      volumes:
+      - name: prompt
+        configMap:
+          name: distill-prompt
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: distill-presolve
+  namespace: distillation
+  labels:
+    app: distill-presolve
+    stage: presolve
+    component: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: distill-presolve
+  template:
+    metadata:
+      labels:
+        app: distill-presolve
+        stage: presolve
+    spec:
+      initContainers:
+      # Wait until the migrate Job created the schema (see comprehend for detail).
+      - name: wait-for-schema
+        image: postgres:15-alpine
+        envFrom:
+        - secretRef:
+            name: secret-postgres
+        command:
+        - sh
+        - -c
+        - |
+          export PGPASSWORD="$POSTGRES_PASSWORD"
+          until psql -h svc-postgres -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select to_regclass('public.distillation_items')" | grep -q distillation_items; do
+            echo "waiting for schema (migrate job)"; sleep 2
+          done
+      containers:
+      - name: presolve
+        image: distillation:latest
+        command:
+        - distill
+        - presolve
+        - --loop
+        envFrom:
+        - secretRef:
+            name: secret-postgres
+        env:
+        - name: POSTGRES_HOST
+          value: svc-postgres
+        - name: POSTGRES_DB
+          value: distillation
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: SUBGATE_ENDPOINT_TEACHER
+          value: ""
+        - name: SUBGATE_ENDPOINT_GENERATOR
+          value: ""
+        - name: SUBGATE_ENDPOINT_STUDENT
+          value: ""
+        - name: SUBGATE_ENDPOINT_JUDGE
+          value: ""
+        - name: SUBGATE_ENDPOINT_TRANSLATOR
+          value: ""
+        - name: SUBGATE_ENDPOINT_VERIFIER
+          value: ""
+        volumeMounts:
+        - name: prompt
+          mountPath: /workspace/prompts/distillation_api.md
+          subPath: distillation_api.md
+          readOnly: true
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      volumes:
+      - name: prompt
+        configMap:
+          name: distill-prompt
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: distill-answer
+  namespace: distillation
+  labels:
+    app: distill-answer
+    stage: answer
+    component: worker
+spec:
+  # answer is the natural scale-out point: it is the paced teacher stage and often
+  # the throughput bottleneck. Raise replicas to run several in parallel -- they
+  # serialize their pacing decisions through a Postgres advisory lock and fence
+  # their claims by POD_NAME, so quota is never double-spent (todos hardening #1/#6).
+  replicas: 1
+  selector:
+    matchLabels:
+      app: distill-answer
+  template:
+    metadata:
+      labels:
+        app: distill-answer
+        stage: answer
+    spec:
+      initContainers:
+      # Wait until the migrate Job created the schema (see comprehend for detail).
+      - name: wait-for-schema
+        image: postgres:15-alpine
+        envFrom:
+        - secretRef:
+            name: secret-postgres
+        command:
+        - sh
+        - -c
+        - |
+          export PGPASSWORD="$POSTGRES_PASSWORD"
+          until psql -h svc-postgres -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select to_regclass('public.distillation_items')" | grep -q distillation_items; do
+            echo "waiting for schema (migrate job)"; sleep 2
+          done
+      containers:
+      - name: answer
+        image: distillation:latest
+        command:
+        - distill
+        - answer
+        - --loop
+        envFrom:
+        - secretRef:
+            name: secret-postgres
+        env:
+        - name: POSTGRES_HOST
+          value: svc-postgres
+        - name: POSTGRES_DB
+          value: distillation
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: SUBGATE_ENDPOINT_TEACHER
+          value: ""
+        - name: SUBGATE_ENDPOINT_GENERATOR
+          value: ""
+        - name: SUBGATE_ENDPOINT_STUDENT
+          value: ""
+        - name: SUBGATE_ENDPOINT_JUDGE
+          value: ""
+        - name: SUBGATE_ENDPOINT_TRANSLATOR
+          value: ""
+        - name: SUBGATE_ENDPOINT_VERIFIER
+          value: ""
+        volumeMounts:
+        - name: prompt
+          mountPath: /workspace/prompts/distillation_api.md
+          subPath: distillation_api.md
+          readOnly: true
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      volumes:
+      - name: prompt
+        configMap:
+          name: distill-prompt
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: distill-verify
+  namespace: distillation
+  labels:
+    app: distill-verify
+    stage: verify
+    component: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: distill-verify
+  template:
+    metadata:
+      labels:
+        app: distill-verify
+        stage: verify
+    spec:
+      initContainers:
+      # Wait until the migrate Job created the schema (see comprehend for detail).
+      - name: wait-for-schema
+        image: postgres:15-alpine
+        envFrom:
+        - secretRef:
+            name: secret-postgres
+        command:
+        - sh
+        - -c
+        - |
+          export PGPASSWORD="$POSTGRES_PASSWORD"
+          until psql -h svc-postgres -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select to_regclass('public.distillation_items')" | grep -q distillation_items; do
+            echo "waiting for schema (migrate job)"; sleep 2
+          done
+      containers:
+      - name: verify
+        image: distillation:latest
+        command:
+        - distill
+        - verify
+        - --loop
+        envFrom:
+        - secretRef:
+            name: secret-postgres
+        env:
+        - name: POSTGRES_HOST
+          value: svc-postgres
+        - name: POSTGRES_DB
+          value: distillation
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: SUBGATE_ENDPOINT_TEACHER
+          value: ""
+        - name: SUBGATE_ENDPOINT_GENERATOR
+          value: ""
+        - name: SUBGATE_ENDPOINT_STUDENT
+          value: ""
+        - name: SUBGATE_ENDPOINT_JUDGE
+          value: ""
+        - name: SUBGATE_ENDPOINT_TRANSLATOR
+          value: ""
+        - name: SUBGATE_ENDPOINT_VERIFIER
+          value: ""
+        volumeMounts:
+        - name: prompt
+          mountPath: /workspace/prompts/distillation_api.md
+          subPath: distillation_api.md
+          readOnly: true
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      volumes:
+      - name: prompt
+        configMap:
+          name: distill-prompt

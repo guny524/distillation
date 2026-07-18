@@ -1,0 +1,324 @@
+# distill run configuration (read by the binary: `distill run --config config/settings.yaml`)
+# PostgreSQL connection is NOT configured here; it comes from environment
+# variables (POSTGRES_HOST/PORT/DB/USER/PASSWORD via k8s Secret).
+
+# -- Quota provider --
+# Matched against subgate GET /quota providers[].provider and used as the
+# pacing state key (quota_pacing_run_logs.provider etc.).
+provider: codex
+
+# -- Role endpoints --
+# Each role maps to an OpenAI-compatible endpoint. Different roles may share
+# one endpoint. teacher_role names the role that answers generation prompts.
+#   base_url:       endpoint root, /v1/chat/completions is appended
+#   model:          model name sent in the request
+#   api_key_env:    env var holding a bearer token (omit when subgate holds auth)
+#   quota_url:      subgate GET /quota for this role's provider. Set on every
+#                   SUBGATE role: the per-step quota gate reads these FACTS before
+#                   spending the role (todos sec 6-3-4). A role WITHOUT quota_url is
+#                   a real API / local model and is used with no quota check
+#                   (error-driven only).
+#   quota_provider: this role's provider key in the /quota providers[] response
+#                   (what the gate matches to find the primary/secondary windows).
+#                   Set alongside quota_url.
+#   source_tag:     X-Subgate-Source header value; subgate attributes pipeline
+#                   usage per tag, separating it from interactive user consumption.
+#
+# Per-step quota gate (todos sec 6-3-4): each always-on worker, before claiming,
+# reads /quota for the roles its step uses and skips the step when the subscription
+# is spent -- comprehend->opencode provider, question->generator, presolve->judge
+# (student is LOCAL, unchecked), answer->teacher+translator, verify->verifier.
+teacher_role: teacher
+roles:
+  teacher:
+    base_url: "http://svc-subgate.subgate:8080"
+    model: "gpt-5.4"
+    quota_url: "http://svc-subgate.subgate:8080/quota"
+    quota_provider: "codex"
+    source_tag: "distillation"
+  # M3 pipeline roles. Roles may share an endpoint; here the subgate stages
+  # (generator/judge/translator/verifier) point at the same subgate endpoint with
+  # their own source_tag AND the same quota_url/quota_provider (one provider, one
+  # /quota), so the gate reads one snapshot per step. Re-point these at local LLMs
+  # (cluster.md) to keep frontier quota for the teacher trajectory only -- drop the
+  # quota_url when a role becomes local so its step no longer gates on subgate.
+  generator:
+    base_url: "http://svc-subgate.subgate:8080"
+    model: "gpt-5.4"
+    quota_url: "http://svc-subgate.subgate:8080/quota"
+    quota_provider: "codex"
+    source_tag: "distillation-generator"
+  # student MUST be LOCAL (project design: student=local). It has NO quota_url, so the
+  # presolve gate never checks it, and presolve runs student self-consistency K times
+  # (pipeline.self_consistency_k, default 3) per item. Pointing it at subgate would
+  # silently burn frontier quota on the cheapest stage with no gate and no warning --
+  # exactly what this pipeline exists to avoid. So it defaults to a LOCAL inference
+  # server placeholder below (NOT subgate); wire it to your own OpenAI-compatible local
+  # LLM (vLLM/llama.cpp/Ollama; cluster.md) and override per-deploy with
+  # SUBGATE_ENDPOINT_STUDENT. Keep quota_url UNSET (local = no gate).
+  student:
+    base_url: "http://host.docker.internal:8000"  # LOCAL LLM placeholder -- NOT subgate
+    model: "local-model"                           # the model your local server serves
+    source_tag: "distillation-student"
+  judge:
+    base_url: "http://svc-subgate.subgate:8080"
+    model: "gpt-5.4"
+    quota_url: "http://svc-subgate.subgate:8080/quota"
+    quota_provider: "codex"
+    source_tag: "distillation-judge"
+  translator:
+    base_url: "http://svc-subgate.subgate:8080"
+    model: "gpt-5.4"
+    quota_url: "http://svc-subgate.subgate:8080/quota"
+    quota_provider: "codex"
+    source_tag: "distillation-translator"
+  verifier:
+    base_url: "http://svc-subgate.subgate:8080"
+    model: "gpt-5.4"
+    quota_url: "http://svc-subgate.subgate:8080/quota"
+    quota_provider: "codex"
+    source_tag: "distillation-verifier"
+
+# -- HTTP transport --
+http:
+  request_timeout_seconds: 300
+  max_retries: 3          # retries after the first attempt (429/5xx/network)
+  retry_base_delay_ms: 2000  # doubles per retry
+
+# -- Prompt assembly --
+prompt_template: "prompts/distillation_api.md"
+taxonomy_path: "config/taxonomy.yaml"
+schema_retries: 1          # re-requests when a response fails schema validation
+
+# -- Crash recovery --
+# `running` run logs older than this are marked crashed_recovered at startup.
+# Must exceed CronJob activeDeadlineSeconds (1800s) plus grace.
+stale_run_after_minutes: 45
+
+# -- DB-queue stage workers (todos sec 2-5) --
+worker:
+  # How long a claimed item's lock may sit before another worker reclaims it as
+  # stale (crash recovery). It MUST exceed a stage's worst-case processing time
+  # (~ max_teacher_calls_per_stage x http.request_timeout_seconds x
+  # (1 + http.max_retries)); otherwise a live worker doing slow work is wrongly
+  # reclaimed and its item is redone, wasting frontier quota. Lock fencing keeps
+  # that safe (a reclaimed worker's late write is refused, never corrupting
+  # data), but the lease should still be generous. 0 -> queue.DefaultStaleLock.
+  stale_lock_minutes: 90
+
+# -- Comprehend stage: opencode agentic harness (todos sec 2-5-4) --
+# The comprehend worker turns a queued source pointer into a comprehension digest
+# the question worker backtranslates from. A plain chat API cannot do this (no
+# link fetch, no auto-compaction; an over-length prompt is a hard 400). opencode
+# is a CLI harness that DOES: `opencode run` fetches the source URL, reads it with
+# auto-compaction, and emits the digest. It is pointed at subgate (config/
+# opencode.json below), so the read spends the subscription quota -- the intended
+# cost; question generation needs no raw chain-of-thought.
+#
+# The provider baseURL(=subgate) + api key + agent definition live in the opencode
+# config FILE (config_path), NOT here, so the endpoint is never hardcoded in the
+# binary. This settings block only carries the CLI invocation knobs.
+#
+# enabled=false makes the worker fall back to a provenance-only digest (no network
+# fetch), so a machine without the opencode binary (local dev / CI) still runs the
+# stage. The shipped image installs opencode (Dockerfile) and bakes config/
+# opencode.json, so it ships enabled.
+comprehend:
+  opencode:
+    enabled: true
+    # opencode executable; "opencode" resolves on PATH (Dockerfile installs it there).
+    bin_path: "opencode"
+    # Exported as OPENCODE_CONFIG so opencode loads the mounted provider(subgate)+
+    # agent config from any working directory. This is the image-baked copy; the
+    # deploy overlay may instead mount config/opencode.json via a configMap and
+    # repoint this path. The opencode provider expects OPENCODE_SUBGATE_API_KEY in
+    # the environment (subgate holds the real auth; a placeholder default is baked
+    # into the image and can be overridden by a k8s Secret without a rebuild).
+    config_path: "/workspace/config/opencode.json"
+    # "provider/model" passed to `opencode run --model`. subgate is the provider
+    # declared in config/opencode.json; the model matches the teacher role's model.
+    model: "subgate/gpt-5.4"
+    # Agent name passed to `opencode run --agent` (defined in config/opencode.json
+    # with webfetch/read allowed, write/edit/bash denied).
+    agent: "comprehend"
+    # Per-invocation deadline: an agentic fetch+read of a large source can be slow.
+    timeout_seconds: 600
+    # Per-step quota gate for comprehend (todos sec 6-3-4): opencode reads the
+    # source THROUGH subgate, so the comprehend worker checks these /quota facts
+    # before claiming and skips the step when the opencode provider is spent. Same
+    # subgate /quota + provider as the teacher roles. Omit quota_url (or set
+    # enabled=false) to disable the gate -- the provenance fallback makes no network
+    # call and spends no quota.
+    quota_url: "http://svc-subgate.subgate:8080/quota"
+    quota_provider: "codex"
+
+# -- Quota pacing --
+# The always-on stage workers gate on subgate's GET /quota FACTS statelessly
+# (todos sec 6-3-4): no reservation ledger, no EMA, no advisory lock in the DB. The
+# gate REUSES these knobs:
+#   weekly_cap_pct        secondary(weekly) straight-line cap: a step skips once
+#                         used% >= weekly_cap_pct * (elapsed fraction of the week),
+#                         the stateless equivalent of spreading the remaining weekly
+#                         budget over the remaining time (sec 2-4).
+#   secondary_window_hours  full weekly-window length used to turn resets_at into the
+#                         elapsed fraction (default 168h = 7d; GET /quota gives
+#                         resets_at, not the length).
+#   primary_cap_pct       primary(5h) HARD ceiling: a step skips once
+#   primary_safety_margin_pct   used% >= primary_cap_pct - primary_safety_margin_pct
+#                         (no time distribution; the short window is a guardrail).
+#   cli_unknown_rate_limit_cooldown  cli transport (used% null) has no facts to read,
+#                         so a 429 arms a PROCESS-LOCAL cooldown of this length during
+#                         which the step skips (never persisted). Keep this SHORT: with
+#                         quota unknown a 429 is a momentary RPM-class signal (live-
+#                         confirmed: backend 200 with plenty of weekly budget seconds
+#                         after a burst 429), and per-item retry backoff already spaces
+#                         the retries -- a long value idles the whole step on one blip.
+# The remaining keys (EMA, hourly-budget, per-run ceilings) are read only by the
+# DEPRECATED monolithic runner, not by the stateless gate. Unset keys keep the
+# internal/pacing defaults.
+pacing:
+  weekly_cap_pct: 100.0
+  secondary_window_hours: 168.0
+  primary_cap_pct: 95.0
+  primary_safety_margin_pct: 1.0
+  cli_unknown_rate_limit_cooldown: "2m"
+
+# -- DB-buffer flush (internal/flush) --
+# distillation_pairs is a BUFFER, not the final store: rows accumulate only until
+# the buffer reaches threshold_rows, at which point the whole buffer is merge-
+# exported to a single compressed Parquet batch on the export volume (export_dir) and the
+# flushed rows are DELETEd. Writing large merged shards (instead of tiny files
+# straight to the export volume) is what makes compression and training I/O efficient.
+#
+# Atomicity (no data loss): each flush snapshots MAX(id) under an export-volume lock, writes
+# rows with id <= that snapshot to a temp dir, fsyncs + verifies the Parquet row
+# count, atomically renames the temp dir to batch-<timestamp>-id<maxid>/, and
+# only THEN deletes those rows. Rows inserted during a flush (higher ids) survive
+# for the next flush. A crash before the delete leaves the buffer intact; at
+# worst a crash between rename and delete re-exports the same rows (a duplicate
+# batch, never a loss).
+#
+# Each flush writes its own batch-*/ subdirectory, so batches never overwrite one
+# another and never collide with a manual `distill export` (which writes
+# train-*.parquet at the export_dir root). Point training at export_dir/batch-*/.
+flush:
+  enabled: true
+  export_dir: "/mnt/distillation"  # PVC mount path (same export root as manual export)
+  threshold_rows: 50000             # flush once the buffer reaches this many rows
+  shard_size: 50000                 # max rows per Parquet shard within a batch
+  compression: zstd                 # zstd | snappy | gzip | none
+
+# -- Artifact ingestion (internal/ingest) --
+# Source material for question backtranslation. Each source has its own
+# `enabled` flag (all default false: real ingestion pulls large dumps / hits
+# external APIs, so it is opt-in and run by the user during integration).
+# Copyright: only short excerpts (rephrasing anchors) are stored, plus the
+# reference id + license. Benchmark-eval items (MedQA/GPQA/…) are filtered out.
+ingest:
+  # Per-run batch size: how many artifacts each enabled source enqueues per ingest
+  # run. The RUN CADENCE (how often ingest runs) is a scheduler concern -- ofelia
+  # `@every N` (docker-compose) / CronJob schedule (k8s), NOT this file. So "1 item
+  # every 5 min" = limit_per_source: 1 here + ofelia `@every 5m` in the overlay.
+  limit_per_source: 1
+
+  # arXiv metadata/abstracts. Set dump_path to a local Atom XML feed, or leave
+  # it empty to query the API (api_base_url + query) at integration time.
+  arxiv:
+    enabled: true
+    categories: ["math", "physics", "cs", "q-bio"]
+    query: "cat:cs.LG"
+    api_base_url: "http://export.arxiv.org/api/query"
+    dump_path: ""
+    max_excerpt_chars: 480
+
+  # StackExchange CC BY-SA questions fetched live from the API
+  # (api.stackexchange.com/2.3/questions, highest-voted first, filter=withbody).
+  # Each site's API `site` slug is derived from name (math.stackexchange -> math);
+  # url_base is only a fallback URL when the API omits a question link. min_score
+  # drops low-quality questions.
+  stackexchange:
+    enabled: true
+    api_base_url: "https://api.stackexchange.com/2.3"
+    license: "CC BY-SA 4.0"
+    min_score: 0
+    max_excerpt_chars: 480
+    sites:
+      - name: "mathoverflow"
+        url_base: "https://mathoverflow.net/q/"
+      - name: "math.stackexchange"
+        url_base: "https://math.stackexchange.com/q/"
+      - name: "physics.stackexchange"
+        url_base: "https://physics.stackexchange.com/q/"
+
+  # Cloud-native OSS GitHub issues/PRs. token_env names the env var holding a
+  # GitHub token; license is per repo (a repo's license is uniform).
+  k8s:
+    enabled: true
+    api_base_url: "https://api.github.com"
+    token_env: "GITHUB_TOKEN"
+    state: "all"
+    per_page: 100
+    max_excerpt_chars: 480
+    repos:
+      - {owner: "kubernetes", name: "kubernetes", license: "Apache-2.0"}
+      - {owner: "kubernetes-sigs", name: "controller-runtime", license: "Apache-2.0"}
+      - {owner: "etcd-io", name: "etcd", license: "Apache-2.0"}
+
+  # PubMed Central OA subset fetched live from NCBI E-utilities (esearch lists
+  # OA-subset PMC ids -> efetch returns their JATS/NXML). only_commercial_use
+  # keeps only commercial-reuse-friendly licenses (CC BY / CC0 / …); search_term
+  # is the esearch query (defaults to the OA-subset filter).
+  pmc:
+    enabled: true
+    api_base_url: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
+    search_term: "open access[filter]"
+    only_commercial_use: true
+    max_excerpt_chars: 480
+
+# -- Question pipeline (internal/pipeline) --
+# mode: artifact (default M3 reverse-generation) or taxonomy (legacy fallback
+# where the teacher invents a task from the 4-axis taxonomy). Artifact mode
+# needs generator/student/judge/translator/verifier roles present in `roles:`.
+pipeline:
+  mode: artifact
+  self_consistency_k: 3           # student self-consistency samples
+  self_consistency_threshold: 0.5 # disagreement rate that flags uncertain
+  # Difficulty-mutation operators applied to deepen the reasoning graph
+  # (Evol-Instruct as a mutation, not an author).
+  mutations: ["fault_injection", "partial_info_removal", "conflicting_constraint"]
+  # Stage -> role name. Roles must exist in `roles:` above.
+  roles:
+    generator: generator
+    student: student
+    judge: judge
+    translator: translator
+    teacher: teacher
+    verifier: verifier
+  # -- Verifier code executor --
+  # When enabled, the verifier RUNS the code in a teacher answer's fenced block
+  # (```python / ```go) and derives pass/fail from the real exit status instead
+  # of trusting an LLM self-report. Exit 0 => pass; non-zero or timeout => fail;
+  # the record is dropped on fail. A prose answer (no code fence) or an
+  # unsupported language falls back to LLM-rule verification.
+  #
+  # SECURITY: this executes untrusted, model-generated code. It is DISABLED by
+  # default and must be an explicit opt-in on a locked-down host. The Go executor
+  # isolates each run in a fresh temp dir, enforces a hard wall-clock timeout
+  # (whole process group killed), caps captured output, and strips the parent
+  # environment (no API keys/tokens reach the child). It does NOT block the
+  # network by itself: to cut network access set `sandbox_command` to a wrapper
+  # that does (e.g. ["unshare","-rn","--"] or ["firejail","--net=none","--"])
+  # AND/OR run this pod under a deny-all-egress NetworkPolicy with a read-only
+  # root filesystem. Only enable inside such a hardened container.
+  executor:
+    enabled: false             # opt-in; false keeps LLM-rule verification
+    timeout_seconds: 20        # hard per-snippet wall-clock deadline
+    max_output_bytes: 65536    # stdout/stderr cap (each) against runaway output
+    sandbox_command: []        # optional isolation wrapper prefix (see SECURITY)
+    languages:
+      python:
+        filename: "solution.py"
+        command: ["python3", "solution.py"]
+      go:
+        filename: "main.go"
+        command: ["go", "run", "main.go"]

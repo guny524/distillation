@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<posts>
+  <row Id="101" PostTypeId="1" Score="42" Title="How to compute the fundamental group of a torus?" Body="&lt;p&gt;I am trying to compute the &lt;b&gt;fundamental group&lt;/b&gt; of the torus using the Seifert-van Kampen theorem. Here is a very long body that keeps describing the setup, the covering spaces, the generators and relations, and many additional details appended purely so the excerpt helper is forced to truncate this text well before it ends, ensuring the copyright length cap is genuinely exercised by the parser test with plenty of extra words to overflow any reasonable short bound.&lt;/p&gt;" Tags="&lt;algebraic-topology&gt;&lt;fundamental-group&gt;" />
+  <row Id="102" PostTypeId="2" Score="10" Body="&lt;p&gt;This is an answer, not a question, and must be skipped.&lt;/p&gt;" ParentId="101" />
+  <row Id="103" PostTypeId="1" Score="1" Title="A GPQA-style multiple choice physics question" Body="&lt;p&gt;What is the value? (A) one (B) two (C) three (D) four&lt;/p&gt;" Tags="&lt;physics&gt;" />
+  <row Id="104" PostTypeId="1" Score="-3" Title="Low score question that should be dropped by min_score" Body="&lt;p&gt;body&lt;/p&gt;" Tags="&lt;misc&gt;" />
+</posts>

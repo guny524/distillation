@@ -1,0 +1,32 @@
+{
+  "items": [
+    {
+      "question_id": 101,
+      "score": 42,
+      "title": "How to compute the fundamental group of a torus?",
+      "body": "<p>I am trying to compute the <b>fundamental group</b> of the torus using the Seifert-van Kampen theorem. Here is a very long body that keeps describing the setup, the covering spaces, the generators and relations, and many additional details appended purely so the excerpt helper is forced to truncate this text well before it ends, ensuring the copyright length cap is genuinely exercised by the parser test with plenty of extra words to overflow any reasonable short bound.</p>",
+      "link": "https://mathoverflow.net/q/101",
+      "tags": ["algebraic-topology", "fundamental-group"],
+      "creation_date": 1600000000
+    },
+    {
+      "question_id": 103,
+      "score": 1,
+      "title": "A GPQA-style multiple choice physics question",
+      "body": "<p>What is the value? (A) one (B) two (C) three (D) four</p>",
+      "link": "https://mathoverflow.net/q/103",
+      "tags": ["physics"],
+      "creation_date": 1600000001
+    },
+    {
+      "question_id": 104,
+      "score": -3,
+      "title": "Low score question that should be dropped by min_score",
+      "body": "<p>body</p>",
+      "link": "https://mathoverflow.net/q/104",
+      "tags": ["misc"],
+      "creation_date": 1600000002
+    }
+  ],
+  "quota_remaining": 9999
+}

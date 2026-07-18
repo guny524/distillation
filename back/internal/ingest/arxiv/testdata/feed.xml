@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <id>http://arxiv.org/abs/2401.07013v2</id>
+    <title>Proxy-Tuning for Black-Box Knowledge Distillation</title>
+    <summary>We study observable-output distillation where a student learns from a frontier teacher without access to hidden states. This is a fairly long abstract that goes on at some length describing the method, the datasets, the ablations, the theoretical analysis, the limitations, the broader impact, and a great deal of additional detail that would exceed any reasonable short-excerpt bound so that the excerpt helper must truncate it well before the end of this paragraph which keeps going and going with more clauses appended purely to make it long enough to guarantee the copyright length cap is exercised by the test harness beyond any doubt whatsoever.</summary>
+    <published>2024-01-13T00:00:00Z</published>
+    <category term="cs.LG"/>
+    <category term="cs.CL"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2402.00001v1</id>
+    <title>On the Cohomology of Moduli Spaces</title>
+    <summary>A short abstract about algebraic geometry and moduli spaces.</summary>
+    <published>2024-02-01T00:00:00Z</published>
+    <category term="math.AG"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2403.00002v1</id>
+    <title>Market Microstructure and Liquidity</title>
+    <summary>An economics abstract that should be filtered out by category selection.</summary>
+    <published>2024-03-01T00:00:00Z</published>
+    <category term="econ.GN"/>
+    <category term="q-fin.TR"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2404.00003v1</id>
+    <title>A New GPQA-style Evaluation Benchmark for Graduate Physics</title>
+    <summary>We introduce a benchmark of multiple-choice questions modeled after GPQA for evaluating models.</summary>
+    <published>2024-04-01T00:00:00Z</published>
+    <category term="physics.ed-ph"/>
+  </entry>
+</feed>

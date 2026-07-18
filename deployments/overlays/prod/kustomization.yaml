@@ -4,12 +4,38 @@ resources:
 
 images:
 - name: distillation
-  newName: distillation
-  newTag: latest  # TODO: replace with actual image registry and tag
+  # newName MUST equal the Makefile's ${REPO_NAME}/${COMPONENT} (back/Makefile) -- the exact
+  # repo `make -C back image-push` pushes to. If it drifts, every pod ImagePullBackOffs.
+  newName: ghcr.io/guny524/distillation
+  # newTag is the per-build tag `make -C back image-push` pushed (Makefile TAG =
+  # <state>-<version>-<arch>-<sha>-<date>). Replace it after each push. NOTE: `latest`
+  # is a placeholder that is NOT pushed, so leaving it as-is will ImagePullBackOff.
+  newTag: latest
 
-secretGenerator:
-- name: secret-postgres
-  namespace: distillation
-  behavior: replace
-  envs:
-  - secret-postgres.env
+# Per-environment endpoint overrides (optional). Each worker reads
+# SUBGATE_ENDPOINT_<ROLE> and overrides that role's base_url; empty (the base
+# default) = use the baked settings.yaml value. Out of the box every role hits
+# subgate, which works but spends frontier quota on the cheap stages (the worker
+# logs a warning). To reserve frontier quota for the teacher, point the cheap
+# roles at your local LLMs (cluster.md): patch each worker for the role(s) it uses
+# (strategic merge is by env name; no image rebuild), then `make apply`. Role ->
+# worker map: question -> generator, presolve -> student + judge, answer ->
+# translator (teacher stays on subgate), verify -> verifier. Example (repeat a
+# block per worker):
+# patches:
+# - target:
+#     kind: Deployment
+#     name: distill-question
+#   patch: |
+#     apiVersion: apps/v1
+#     kind: Deployment
+#     metadata:
+#       name: distill-question
+#     spec:
+#       template:
+#         spec:
+#           containers:
+#           - name: question
+#             env:
+#             - name: SUBGATE_ENDPOINT_GENERATOR
+#               value: "http://YOUR-LOCAL-LLM:8000"

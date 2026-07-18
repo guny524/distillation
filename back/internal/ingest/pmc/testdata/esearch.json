@@ -1,0 +1,11 @@
+{
+  "header": {"type": "esearch", "version": "0.3"},
+  "esearchresult": {
+    "count": "4",
+    "retmax": "4",
+    "retstart": "0",
+    "idlist": ["7654321", "7654322", "7654323", "7654324"],
+    "translationset": [],
+    "querytranslation": "open access[filter]"
+  }
+}

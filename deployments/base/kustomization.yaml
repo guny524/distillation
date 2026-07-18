@@ -1,6 +1,37 @@
 namespace: distillation
 
 resources:
+- migrate-job.yaml  # one-shot schema apply (distill migrate); workers gate on it
 - postgres
-- cronjob.yaml
+- workers.yaml    # always-on stage workers (comprehend/question/presolve/answer/verify)
+- cronjob.yaml    # periodic jobs (ingest/flush)
 - pvc-data.yaml
+
+# distill-prompt carries the tunable prompt template (prompts/distillation_api.md,
+# the single repo copy used by local runs too) as a mounted file, so it can be
+# edited and re-applied without an image rebuild. distill-opencode does the same for
+# the opencode provider/agent config (config/opencode.json) the comprehend worker
+# uses. Referencing files above this dir needs `kustomize build --load-restrictor
+# LoadRestrictionsNone` (or `kubectl apply -k --load-restrictor=none`); kept as one
+# source of truth rather than a drift-prone copy under deployments/.
+configMapGenerator:
+- name: distill-prompt
+  files:
+  - distillation_api.md=../../back/prompts/distillation_api.md
+- name: distill-opencode
+  files:
+  - opencode.json=../../back/config/opencode.json
+
+# secret-opencode carries the opencode subgate api key. Its source (secret-opencode.env)
+# is a committed, functional placeholder -- NOT a real secret (subgate holds the
+# real auth), so it is deliberately not named secret-*.env and is not git-ignored,
+# letting the stack build on a fresh clone with no local setup. Kept separate from
+# secret-postgres so DB creds and gateway auth have independent lifecycles; the
+# comprehend worker reads it via secretKeyRef.
+secretGenerator:
+- name: secret-opencode
+  envs:
+  - secret-opencode.env
+
+generatorOptions:
+  disableNameSuffixHash: true

@@ -1,0 +1,38 @@
+version: "2"
+# Single consolidated block for the whole pipeline persistence layer. All paths
+# are relative to THIS file's directory (internal/db); `make sqlc` runs
+# `sqlc generate -f internal/db/sqlc.yaml`, and sqlc resolves schema/queries/out
+# against the config file's directory.
+#
+# Schema = the same migration files db.Migrate applies via go:embed (migrations/),
+# so the DDL sqlc validates against can never drift from the DDL the workers run.
+# Queries = the static statements wrapped by the hand-written Store/loader methods
+# (Enqueue/GetCursor/SaveCursor + CountPairs/MaxPairID/DeletePairsByTaskIDs).
+# The dynamic per-stage transitions (queue claim/complete/fail/retry/supersede)
+# and loader InsertRecord stay hand-written -- see queries.sql / claim.go for why.
+sql:
+  - engine: "postgresql"
+    schema:
+      - "schema.sql"
+    queries:
+      - "queries.sql"
+    gen:
+      go:
+        package: "sqlcgen"
+        out: "sqlcgen"
+        sql_package: "pgx/v5"
+        emit_json_tags: false
+        emit_prepared_queries: false
+        overrides:
+          # Nullable timestamptz as *time.Time (not pgtype.Timestamptz) so the
+          # Enqueue wrapper keeps passing nullTime(art.RetrievedAt) unchanged.
+          # Global here (single block); the only other nullable timestamptz is
+          # distillation_pairs.created_at, whose generated model field is unused
+          # (loader scans count/max only), so the override has no runtime effect
+          # on the loader side.
+          - db_type: "timestamptz"
+            nullable: true
+            go_type:
+              import: "time"
+              type: "Time"
+              pointer: true

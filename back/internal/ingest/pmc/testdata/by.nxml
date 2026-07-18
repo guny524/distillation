@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<article xmlns:xlink="http://www.w3.org/1999/xlink" article-type="research-article">
+  <front>
+    <article-meta>
+      <article-id pub-id-type="pmid">30000001</article-id>
+      <article-id pub-id-type="pmc">7654321</article-id>
+      <title-group>
+        <article-title>Deep learning for protein structure prediction</article-title>
+      </title-group>
+      <permissions>
+        <license license-type="open-access" xlink:href="https://creativecommons.org/licenses/by/4.0/">
+          <license-p>This is an open access article distributed under the terms of the Creative Commons Attribution License.</license-p>
+        </license>
+      </permissions>
+      <abstract>
+        <p>We present a method for predicting protein tertiary structure from sequence. This is a deliberately long abstract that continues describing the architecture, the training data, the evaluation protocol, the results, the ablations, and many more details appended purely so the excerpt helper must truncate this text well before the end, ensuring the copyright length cap is genuinely exercised by the parser test with plenty of extra words to overflow any short bound.</p>
+      </abstract>
+    </article-meta>
+  </front>
+</article>

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<article xmlns:xlink="http://www.w3.org/1999/xlink" article-type="research-article">
+  <front>
+    <article-meta>
+      <article-id pub-id-type="pmc">7654323</article-id>
+      <title-group>
+        <article-title>A PubMedQA benchmark evaluation of clinical language models</article-title>
+      </title-group>
+      <permissions>
+        <license license-type="open-access" xlink:href="https://creativecommons.org/licenses/by/4.0/">
+          <license-p>Open access, CC BY.</license-p>
+        </license>
+      </permissions>
+      <abstract>
+        <p>We evaluate models on the PubMedQA benchmark.</p>
+      </abstract>
+    </article-meta>
+  </front>
+</article>

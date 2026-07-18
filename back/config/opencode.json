@@ -1,0 +1,35 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "subgate": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "subgate (subscription-backed OpenAI-compatible gateway)",
+      "options": {
+        "baseURL": "http://svc-subgate.subgate:8080/v1",
+        "apiKey": "{env:OPENCODE_SUBGATE_API_KEY}"
+      },
+      "models": {
+        "gpt-5.4": {
+          "name": "gpt-5.4 (via subgate)"
+        }
+      }
+    }
+  },
+  "model": "subgate/gpt-5.4",
+  "agent": {
+    "comprehend": {
+      "description": "Fetch a source link, read it with auto-compaction, and emit a comprehension digest for backtranslation.",
+      "mode": "primary",
+      "model": "subgate/gpt-5.4",
+      "temperature": 0.2,
+      "prompt": "You are a comprehension agent in a knowledge-distillation pipeline. Each request gives you a source-document pointer (URL, title, locator, license) and sometimes a short excerpt. Use the webfetch tool to fetch the URL and read the document fully, relying on auto-compaction to absorb long content. Then produce a faithful, self-contained comprehension digest that a downstream worker will backtranslate into a training question: capture the core problem, key claims, method or approach, constraints, and context, grounded strictly in the actual fetched source content. Never invent facts the source does not support. Never write or edit files or run shell commands. Output ONLY the digest, wrapped exactly between <comprehension_digest> and </comprehension_digest>, with no other commentary before or after.",
+      "permission": {
+        "webfetch": "allow",
+        "read": "allow",
+        "edit": "deny",
+        "write": "deny",
+        "bash": "deny"
+      }
+    }
+  }
+}

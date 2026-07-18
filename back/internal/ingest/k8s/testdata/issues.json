@@ -1,0 +1,21 @@
+[
+  {
+    "number": 12345,
+    "title": "Reconcile loop hot-loops when the informer cache is stale",
+    "body": "When the shared informer cache has not synced, the controller reconcile function requeues immediately, causing a hot loop. This is a long issue body describing the symptom, the root-cause analysis, the affected versions, the reproduction steps, the proposed fix, the alternatives considered, and a great deal of additional discussion appended so that the excerpt helper is forced to truncate the text well before it ends, guaranteeing the copyright length cap is exercised by the parser test with many extra words to overflow any short bound.",
+    "html_url": "https://github.com/kubernetes-sigs/controller-runtime/issues/12345"
+  },
+  {
+    "number": 6789,
+    "title": "Add leader election lease duration flag",
+    "body": "Proposal to expose the lease duration as a flag.",
+    "html_url": "https://github.com/kubernetes-sigs/controller-runtime/pull/6789",
+    "pull_request": {"url": "https://api.github.com/repos/kubernetes-sigs/controller-runtime/pulls/6789"}
+  },
+  {
+    "number": 999,
+    "title": "MMLU benchmark evaluation of the scheduler docs",
+    "body": "Answer: B. This looks like a benchmark item and must be filtered out.",
+    "html_url": "https://github.com/kubernetes-sigs/controller-runtime/issues/999"
+  }
+]

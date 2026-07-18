@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<article xmlns:xlink="http://www.w3.org/1999/xlink" article-type="research-article">
+  <front>
+    <article-meta>
+      <article-id pub-id-type="pmc">7654322</article-id>
+      <title-group>
+        <article-title>A non-commercial licensed study on cell signaling</article-title>
+      </title-group>
+      <permissions>
+        <license license-type="open-access" xlink:href="https://creativecommons.org/licenses/by-nc/4.0/">
+          <license-p>This is an open access article under the CC BY-NC license.</license-p>
+        </license>
+      </permissions>
+      <abstract>
+        <p>An abstract about cell signaling pathways under a non-commercial license.</p>
+      </abstract>
+    </article-meta>
+  </front>
+</article>
